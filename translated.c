@@ -25,9 +25,9 @@ typedef struct {
 } Translated;
 
 
-///////////////////
-//// FUNCTIONS ////
-///////////////////
+/////////////////
+//// HELPERS ////
+/////////////////
 
 int read_number(char*, int, int);
 int next_index(char*, int, int);
@@ -37,7 +37,10 @@ char* show_text(TranslatedText*);
 int len_number(int);
 char* write_number(int);
 char* write_text(Translated*);
+char* get_language(void);
+char* get_language_text(Translated*, char*);
 
+// read number from text
 int read_number(char* str, int index, int max)
 {
     int number_index = 0;
@@ -54,6 +57,7 @@ int read_number(char* str, int index, int max)
     return atoi(number);
 }
 
+// get index after read number and comma
 int next_index(char* str, int index, int max) {
     while (index < max && str[index] != ',' && str[index] != ')') {
         index++;
@@ -64,6 +68,7 @@ int next_index(char* str, int index, int max) {
     return index + 1;
 }
 
+// read size and text into a TranslatedText
 TranslatedText* read_text(char* str, int index, int max) {
     int length = read_number(str, index, max);
     int next = next_index(str, index, max);
@@ -77,6 +82,7 @@ TranslatedText* read_text(char* str, int index, int max) {
     return result;
 }
 
+// get index after read size, text and comma
 int next_text_index(char* str, TranslatedText* text, int index, int max) {
     int next = next_index(str, index, max);
 
@@ -89,6 +95,7 @@ int next_text_index(char* str, TranslatedText* text, int index, int max) {
     return next + 1;
 }
 
+// return string from TranslatedText
 char* show_text(TranslatedText* text) {
     int length = text->length - sizeof(int32);
     char* read = (char*) palloc(sizeof(char) * (length + 1));
@@ -97,6 +104,7 @@ char* show_text(TranslatedText* text) {
     return read;
 }
 
+// convert number to string
 char* write_number(int number) 
 {
     char* result = palloc(sizeof(char) * 10);
@@ -104,6 +112,7 @@ char* write_number(int number)
     return result;
 }
 
+// return length of a number (after convert to text)
 int len_number(int number)
 {
     char* text = write_number(number);
@@ -112,6 +121,7 @@ int len_number(int number)
     return result;
 }
 
+// show Translated as a String
 char* write_text(Translated* translated)
 {
     int            number;
@@ -154,6 +164,147 @@ char* write_text(Translated* translated)
     result[length - 2] = ')';
     result[length - 1] = 0;
     return result;
+}
+
+// get language
+char* get_language()
+{
+    char *language = (char*) palloc(sizeof(char) * (2 + 1));
+    memcpy(language, "pt", 2);
+    language[2] = 0;
+    return language;
+}
+
+// get text from language
+char* get_language_text(Translated* translated, char* language)
+{
+    int            number;
+    TranslatedText *text;
+
+    number = translated->number;
+    text = (TranslatedText*)(((char *)translated) + (sizeof(int32) * 2));
+    for (int i = 0; i < number; i+=2)
+    {
+        if (memcmp(language, text->text, text->length - sizeof(int32)) == 0) {
+            text = (TranslatedText*)(((char *)text) + text->length);
+            return show_text(text);
+        }
+        text = (TranslatedText*)(((char *)text) + text->length);
+        text = (TranslatedText*)(((char *)text) + text->length);
+    }
+
+    return NULL;
+}
+
+///////////////////
+//// FUNCTIONS ////
+///////////////////
+
+PG_FUNCTION_INFO_V1(create_text);
+PG_FUNCTION_INFO_V1(add_text);
+        
+Datum
+create_text(PG_FUNCTION_ARGS)
+{
+    Translated *result;
+    char       *right_arg = PG_GETARG_CSTRING(0);
+    char       *bytes;
+    char       *language;
+    int32      language_length;
+    int32      text_length;
+    int32      total_length;
+
+    language = get_language();
+    language_length = strlen(language);
+    text_length = strlen(right_arg);
+    total_length = sizeof(int32) * 4 + language_length + text_length;
+
+    result = (Translated *) palloc(total_length);
+    SET_VARSIZE(result, total_length);
+    result->number = 2;
+    bytes = result->texts;
+    ((TranslatedText*)bytes)->length = language_length + sizeof(int32);
+    bytes += sizeof(int32);
+    memcpy(bytes, language, language_length);
+    bytes += language_length;
+    ((TranslatedText*)bytes)->length = text_length + sizeof(int32);
+    bytes += sizeof(int32);
+    memcpy(bytes, right_arg, text_length);
+
+    PG_RETURN_POINTER(result);
+}
+
+Datum
+add_text(PG_FUNCTION_ARGS)
+{
+    Translated     *result;
+    Translated     *left_arg = (Translated*) PG_GETARG_POINTER(0);
+    char           *right_arg = PG_GETARG_CSTRING(1);
+    char           *bytes;
+    char           *language;
+    TranslatedText *text;
+    int32          language_length;
+    int32          text_length;
+    int32          length;
+    int32          number;
+    int32          index = -1;
+
+    language = get_language();
+    language_length = strlen(language);
+    text_length = strlen(right_arg);
+
+    length = VARSIZE_4B(left_arg) + language_length + text_length + sizeof(int32) * 2;
+    number = left_arg->number;
+    text = (TranslatedText*)(((char *)left_arg) + (sizeof(int32) * 2));
+    for (int i = 0; i < number; i+=2)
+    {
+        if (memcmp(language, text->text, text->length - sizeof(int32)) == 0) {
+            length -= text->length;
+            text = (TranslatedText*)(((char *)text) + text->length);
+            length -= text->length;
+            index = i;
+            break;
+        }
+        text = (TranslatedText*)(((char *)text) + text->length);
+        text = (TranslatedText*)(((char *)text) + text->length);
+    }
+
+    result = (Translated *) palloc(length);
+    SET_VARSIZE(result, length);
+    result->number = number;
+    bytes = result->texts;
+    text = (TranslatedText*)(((char *)left_arg) + (sizeof(int32) * 2));
+    for (int i = 0; i < number; i+=2) {
+        memcpy(bytes, text, text->length);
+        bytes += text->length;
+        text = (TranslatedText*)(((char *)text) + text->length);
+
+        if (i == index) {
+            ((TranslatedText*)bytes)->length = text_length + sizeof(int32);
+            bytes += sizeof(int32);
+            memcpy(bytes, right_arg, text_length);
+            bytes += text_length;
+        }
+        else 
+        {
+            memcpy(bytes, text, text->length);
+            bytes += text->length;
+        }
+        text = (TranslatedText*)(((char *)text) + text->length);
+    }
+    if (index == -1) {
+        ((TranslatedText*)bytes)->length = language_length + sizeof(int32);
+        bytes += sizeof(int32);
+        memcpy(bytes, language, language_length);
+        bytes += language_length;
+        ((TranslatedText*)bytes)->length = text_length + sizeof(int32);
+        bytes += sizeof(int32);
+        memcpy(bytes, right_arg, text_length);
+
+        result->number += 2;
+    }
+
+    PG_RETURN_POINTER(result);
 }
 
 ////////////////////////
@@ -205,8 +356,6 @@ translated_in(PG_FUNCTION_ARGS)
         bytes += texts[i]->length;
     }
 
-    // ereport(INFO, (errmsg("Length: %d", total_length)));
-
     PG_RETURN_POINTER(result);
 }
 
@@ -223,7 +372,7 @@ translated_out(PG_FUNCTION_ARGS)
     Translated *translated = (Translated *) PG_GETARG_POINTER(0);
     char       *result;
 
-    ereport(INFO, (errmsg("nm: %d", translated->number)));
+    // ereport(INFO, (errmsg("nm: %d", translated->number)));
     result = psprintf("%s", write_text(translated));
 
     PG_RETURN_CSTRING(result);
