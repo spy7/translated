@@ -39,6 +39,7 @@ int len_number(int);
 char* write_number(int);
 char* write_text(Translated*);
 char* read_setting(char*);
+char** read_setting_2(char*, char*);
 char* get_language(void);
 char* get_language_text(Translated*, char*);
 
@@ -177,26 +178,53 @@ char* read_setting(char* name)
 
     SPI_connect();
 
-    PG_TRY();
-    {
-        ret = SPI_exec(psprintf("SELECT current_setting('%s')", name), 0);
-    }
-    PG_CATCH();
-    {
-        ret = 0;
-    }
-    PG_END_TRY();
+    ret = SPI_exec(psprintf("SELECT COALESCE(current_setting('%s', TRUE), '')", name), 0);
 
     proc = SPI_processed;
 
     if (ret > 0 && SPI_tuptable != NULL && proc > 0)
     {
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
-        SPITupleTable *tuptable = SPI_tuptable;
-        HeapTuple tuple = tuptable->vals[0];
-        result = psprintf("%s", SPI_getvalue(tuple, tupdesc, 1));
+        HeapTuple tuple = SPI_tuptable->vals[0];
+        char      *response = SPI_getvalue(tuple, tupdesc, 1);
+        result = palloc(sizeof(char) * strlen(response));
+        sprintf(result, "%s", response);
     }
+    
+    SPI_finish();
 
+    return result;
+}
+
+char** read_setting_2(char* name1, char* name2)
+{
+    char **result = NULL;
+    int  ret;
+    int  proc;
+
+    SPI_connect();
+
+    ret = SPI_exec(psprintf("SELECT COALESCE(current_setting('%s', TRUE), ''), COALESCE(current_setting('%s', TRUE), '')", name1, name2), 0);
+
+    proc = SPI_processed;
+
+    if (ret > 0 && SPI_tuptable != NULL && proc > 0)
+    {
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        HeapTuple tuple = SPI_tuptable->vals[0];
+        char      *response;
+        
+        result = palloc(sizeof(char*) * 2);
+
+        response = SPI_getvalue(tuple, tupdesc, 1);
+        result[0] = palloc(sizeof(char) * strlen(response));
+        sprintf(result[0], "%s", response);
+
+        response = SPI_getvalue(tuple, tupdesc, 2);
+        result[1] = palloc(sizeof(char) * strlen(response));
+        sprintf(result[1], "%s", response);
+    }
+    
     SPI_finish();
 
     return result;
@@ -207,11 +235,8 @@ char* get_language()
 {
     char *language = read_setting("trl.lang");
 
-    if (language == NULL)
+    if (language == NULL || strlen(language) < 1)
         ereport(ERROR, (errcode(ERRCODE_UNDEFINED_PARAMETER), errmsg("Undefined language. Use: SET trl.lang")));
-
-    if (strlen(language) < 1)
-        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_PARAMETER), errmsg("Empty language")));
 
     return language;
 }
@@ -425,18 +450,15 @@ Datum
 translated_out(PG_FUNCTION_ARGS)
 {
     Translated *translated = (Translated *) PG_GETARG_POINTER(0);
-    char       *language;
+    char       **settings;
     char       *result;
-    char       *output = read_setting("trl.output");
-    
-    if (output != NULL && strcmp(output, "true") == 0)
-    {
-        language = get_language();
-        result = get_language_text(translated, language);
-        if (result == NULL)
-            PG_RETURN_NULL();
-        PG_RETURN_CSTRING(result);
-    }
-    
-    PG_RETURN_CSTRING(write_text(translated));
+
+    settings = read_setting_2("trl.lang", "tri.output");
+    if (settings == NULL || strlen(settings[0]) < 1 || strcmp(settings[1], "false") == 0)
+        PG_RETURN_CSTRING(write_text(translated));
+
+    result = get_language_text(translated, settings[0]);
+    if (result == NULL)
+        PG_RETURN_CSTRING("");
+    PG_RETURN_CSTRING(result);
 }
