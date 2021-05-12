@@ -7,6 +7,7 @@
 #include "fmgr.h"
 #include "utils/geo_decls.h"
 #include "lib/stringinfo.h"
+#include "executor/spi.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -37,6 +38,7 @@ char* show_text(TranslatedText*);
 int len_number(int);
 char* write_number(int);
 char* write_text(Translated*);
+char* read_setting(char*);
 char* get_language(void);
 char* get_language_text(Translated*, char*);
 
@@ -166,22 +168,65 @@ char* write_text(Translated* translated)
     return result;
 }
 
+// read settings
+char* read_setting(char* name)
+{
+    char *result = NULL;
+    int  ret;
+    int  proc;
+
+    SPI_connect();
+
+    PG_TRY();
+    {
+        ret = SPI_exec(psprintf("SELECT current_setting('%s')", name), 0);
+    }
+    PG_CATCH();
+    {
+        ret = 0;
+    }
+    PG_END_TRY();
+
+    proc = SPI_processed;
+
+    if (ret > 0 && SPI_tuptable != NULL && proc > 0)
+    {
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        SPITupleTable *tuptable = SPI_tuptable;
+        HeapTuple tuple = tuptable->vals[0];
+        result = psprintf("%s", SPI_getvalue(tuple, tupdesc, 1));
+    }
+
+    SPI_finish();
+
+    return result;
+}
+
 // get language
 char* get_language()
 {
-    char *language = (char*) palloc(sizeof(char) * (2 + 1));
-    memcpy(language, "pt", 2);
-    language[2] = 0;
+    char *language = read_setting("trl.lang");
+
+    if (language == NULL)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_PARAMETER), errmsg("Undefined language. Use: SET trl.lang")));
+
+    if (strlen(language) < 1)
+        ereport(ERROR, (errcode(ERRCODE_UNDEFINED_PARAMETER), errmsg("Empty language")));
+
     return language;
 }
 
-// get text from language
+// get text from language (or first)
 char* get_language_text(Translated* translated, char* language)
 {
     int            number;
     TranslatedText *text;
+    char           *first;
 
     number = translated->number;
+    if (number < 1)
+        return NULL;
+
     text = (TranslatedText*)(((char *)translated) + (sizeof(int32) * 2));
     for (int i = 0; i < number; i+=2)
     {
@@ -193,7 +238,13 @@ char* get_language_text(Translated* translated, char* language)
         text = (TranslatedText*)(((char *)text) + text->length);
     }
 
-    return NULL;
+    first = read_setting("trl.first");
+    if (first != NULL && strcmp(first, "false") == 0)
+        return NULL;
+
+    text = (TranslatedText*)(((char *)translated) + (sizeof(int32) * 2));
+    text = (TranslatedText*)(((char *)text) + text->length);
+    return show_text(text);
 }
 
 ///////////////////
@@ -326,8 +377,12 @@ translated_in(PG_FUNCTION_ARGS)
     int32           index;
     int32           total_length = sizeof(int32) * 2;
 
-    if (length < 6 || memcmp("%TRL(", str, 5) != 0)
-         ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION), errmsg("Invalid input syntax for type translated: \"%s\"", str)));
+    if (length < 6 || memcmp("%TRL(", str, 5) != 0) {
+        char* input = read_setting("trl.input");
+        if (input != NULL && strcmp(input, "true") == 0)
+            return create_text(fcinfo);
+        ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION), errmsg("Invalid input syntax for type translated: \"%s\"", str)));
+    }
 
     number = read_number(str, 5, length);    
     index = next_index(str, 5, length);
@@ -370,10 +425,18 @@ Datum
 translated_out(PG_FUNCTION_ARGS)
 {
     Translated *translated = (Translated *) PG_GETARG_POINTER(0);
+    char       *language;
     char       *result;
-
-    // ereport(INFO, (errmsg("nm: %d", translated->number)));
-    result = psprintf("%s", write_text(translated));
-
-    PG_RETURN_CSTRING(result);
+    char       *output = read_setting("trl.output");
+    
+    if (output != NULL && strcmp(output, "true") == 0)
+    {
+        language = get_language();
+        result = get_language_text(translated, language);
+        if (result == NULL)
+            PG_RETURN_NULL();
+        PG_RETURN_CSTRING(result);
+    }
+    
+    PG_RETURN_CSTRING(write_text(translated));
 }
