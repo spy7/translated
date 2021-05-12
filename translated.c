@@ -453,7 +453,7 @@ translated_out(PG_FUNCTION_ARGS)
     char       **settings;
     char       *result;
 
-    settings = read_setting_2("trl.lang", "tri.output");
+    settings = read_setting_2("trl.lang", "trl.output");
     if (settings == NULL || strlen(settings[0]) < 1 || strcmp(settings[1], "false") == 0)
         PG_RETURN_CSTRING(write_text(translated));
 
