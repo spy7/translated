@@ -117,13 +117,10 @@ CREATE OPERATOR !== (
 -- DELETE FROM traduz WHERE true;
 
 -- SELECT * FROM traduz ORDER BY id DESC;
-
 -- SELECT * FROM traduz WHERE valor <> 'b';
-
 
 -- SET trl.lang = 'en';
 -- SET trl.input = TRUE;
 -- SET trl.first = FALSE;
 -- SET trl.output = TRUE;
 -- SELECT current_setting('trl.lang', true);
-
