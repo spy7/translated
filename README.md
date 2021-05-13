@@ -28,9 +28,9 @@
 
 ### Comparar com texto
 
-* Usar cast, "!" ou o operator ==
+* Usar cast, "!" ou o operator "=="
 * `SELECT campo FROM tabela WHERE campo = 'meu texto'::cstring;`
-* `SELECT campo FROM tabela WHERE campo = !'meu texto'::cstring;`
+* `SELECT campo FROM tabela WHERE campo = !'meu texto';`
 * `SELECT campo FROM tabela WHERE campo == 'meu texto';`
 
 ## Configurar INPUT automático
@@ -39,7 +39,7 @@
 
 ### Insert
 
-* Não precisa mais do '!'
+* Não precisa mais do "!"
 * `INSERT INTO tabela(campo) VALUES ('meu texto');`
 
 ### Update
