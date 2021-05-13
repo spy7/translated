@@ -278,6 +278,8 @@ char* get_language_text(Translated* translated, char* language)
 
 PG_FUNCTION_INFO_V1(create_text);
 PG_FUNCTION_INFO_V1(add_text);
+PG_FUNCTION_INFO_V1(compare_text);
+PG_FUNCTION_INFO_V1(compare_translated);
         
 Datum
 create_text(PG_FUNCTION_ARGS)
@@ -381,6 +383,46 @@ add_text(PG_FUNCTION_ARGS)
     }
 
     PG_RETURN_POINTER(result);
+}
+
+Datum
+compare_text(PG_FUNCTION_ARGS)
+{
+    Translated *left_arg = (Translated *) PG_GETARG_POINTER(0);
+    char       *right_arg = PG_GETARG_CSTRING(1);
+    char       **settings;
+    char       *text;
+
+    settings = read_setting_2("trl.lang", "trl.output");
+    if (settings == NULL || strlen(settings[0]) < 1 || strcmp(settings[1], "false") == 0)
+        PG_RETURN_BOOL(strcmp(write_text(left_arg), right_arg) == 0);
+
+    text = get_language_text(left_arg, settings[0]);
+    if (text == NULL)
+        PG_RETURN_BOOL(strcmp("", right_arg) == 0);
+    PG_RETURN_BOOL(strcmp(text, right_arg) == 0);
+}
+
+Datum
+compare_translated(PG_FUNCTION_ARGS)
+{
+    Translated *left_arg = (Translated *) PG_GETARG_POINTER(0);
+    Translated *right_arg = (Translated *) PG_GETARG_POINTER(1);
+    char       **settings;
+    char       *text1;
+    char       *text2;
+
+    settings = read_setting_2("trl.lang", "trl.output");
+    if (settings == NULL || strlen(settings[0]) < 1 || strcmp(settings[1], "false") == 0)
+        PG_RETURN_BOOL(strcmp(write_text(left_arg), write_text(right_arg))) == 0;
+
+    text1 = get_language_text(left_arg, settings[0]);
+    text2 = get_language_text(right_arg, settings[0]);
+    if (text1 == NULL)
+        PG_RETURN_BOOL(text2 == NULL || strcmp(text2, "") == 0);
+    if (text2 == NULL)
+        PG_RETURN_BOOL(strcmp(text1, "") == 0);
+    PG_RETURN_BOOL(strcmp(text1, text2) == 0);
 }
 
 ////////////////////////
