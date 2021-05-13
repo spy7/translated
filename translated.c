@@ -187,7 +187,7 @@ char* read_setting(char* name)
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
         HeapTuple tuple = SPI_tuptable->vals[0];
         char      *response = SPI_getvalue(tuple, tupdesc, 1);
-        result = palloc(sizeof(char) * strlen(response));
+        result = palloc(sizeof(char) * strlen(response) + 1);
         sprintf(result, "%s", response);
     }
     
@@ -217,11 +217,11 @@ char** read_setting_2(char* name1, char* name2)
         result = palloc(sizeof(char*) * 2);
 
         response = SPI_getvalue(tuple, tupdesc, 1);
-        result[0] = palloc(sizeof(char) * strlen(response));
+        result[0] = palloc(sizeof(char) * strlen(response) + 1);
         sprintf(result[0], "%s", response);
 
         response = SPI_getvalue(tuple, tupdesc, 2);
-        result[1] = palloc(sizeof(char) * strlen(response));
+        result[1] = palloc(sizeof(char) * strlen(response) + 1);
         sprintf(result[1], "%s", response);
     }
     
@@ -247,10 +247,14 @@ char* get_language_text(Translated* translated, char* language)
     int            number;
     TranslatedText *text;
     char           *first;
+    char           *result;
 
     number = translated->number;
-    if (number < 1)
-        return NULL;
+    if (number < 1) {
+        result = palloc(sizeof(char));
+        result[0] = 0;
+        return result;
+    }
 
     text = (TranslatedText*)(((char *)translated) + (sizeof(int32) * 2));
     for (int i = 0; i < number; i+=2)
@@ -264,8 +268,11 @@ char* get_language_text(Translated* translated, char* language)
     }
 
     first = read_setting("trl.first");
-    if (first != NULL && strcmp(first, "false") == 0)
-        return NULL;
+    if (first != NULL && strcmp(first, "false") == 0) {
+        result = palloc(sizeof(char));
+        result[0] = 0;
+        return result;
+    }
 
     text = (TranslatedText*)(((char *)translated) + (sizeof(int32) * 2));
     text = (TranslatedText*)(((char *)text) + text->length);
@@ -278,8 +285,10 @@ char* get_language_text(Translated* translated, char* language)
 
 PG_FUNCTION_INFO_V1(create_text);
 PG_FUNCTION_INFO_V1(add_text);
+PG_FUNCTION_INFO_V1(compare_string);
+PG_FUNCTION_INFO_V1(compare_string_not);
 PG_FUNCTION_INFO_V1(compare_text);
-PG_FUNCTION_INFO_V1(compare_translated);
+PG_FUNCTION_INFO_V1(compare_text_not);
         
 Datum
 create_text(PG_FUNCTION_ARGS)
@@ -386,7 +395,7 @@ add_text(PG_FUNCTION_ARGS)
 }
 
 Datum
-compare_text(PG_FUNCTION_ARGS)
+compare_string(PG_FUNCTION_ARGS)
 {
     Translated *left_arg = (Translated *) PG_GETARG_POINTER(0);
     char       *right_arg = PG_GETARG_CSTRING(1);
@@ -398,17 +407,22 @@ compare_text(PG_FUNCTION_ARGS)
         PG_RETURN_BOOL(strcmp(write_text(left_arg), right_arg) == 0);
 
     text = get_language_text(left_arg, settings[0]);
-    if (text == NULL)
-        PG_RETURN_BOOL(strcmp("", right_arg) == 0);
     PG_RETURN_BOOL(strcmp(text, right_arg) == 0);
 }
 
 Datum
-compare_translated(PG_FUNCTION_ARGS)
+compare_string_not(PG_FUNCTION_ARGS)
+{
+    PG_RETURN_BOOL(!compare_string(fcinfo));
+}
+
+Datum
+compare_text(PG_FUNCTION_ARGS)
 {
     Translated *left_arg = (Translated *) PG_GETARG_POINTER(0);
     Translated *right_arg = (Translated *) PG_GETARG_POINTER(1);
     char       **settings;
+    char       *language;
     char       *text1;
     char       *text2;
 
@@ -416,13 +430,18 @@ compare_translated(PG_FUNCTION_ARGS)
     if (settings == NULL || strlen(settings[0]) < 1 || strcmp(settings[1], "false") == 0)
         PG_RETURN_BOOL(strcmp(write_text(left_arg), write_text(right_arg))) == 0;
 
-    text1 = get_language_text(left_arg, settings[0]);
-    text2 = get_language_text(right_arg, settings[0]);
-    if (text1 == NULL)
-        PG_RETURN_BOOL(text2 == NULL || strcmp(text2, "") == 0);
-    if (text2 == NULL)
-        PG_RETURN_BOOL(strcmp(text1, "") == 0);
+    language = palloc(sizeof(char) * strlen(settings[0]) + 1);
+    strcpy(language, settings[0]);
+
+    text1 = get_language_text(left_arg, language);
+    text2 = get_language_text(right_arg, language);
     PG_RETURN_BOOL(strcmp(text1, text2) == 0);
+}
+
+Datum
+compare_text_not(PG_FUNCTION_ARGS)
+{
+    PG_RETURN_BOOL(!compare_text(fcinfo));
 }
 
 ////////////////////////
@@ -500,7 +519,5 @@ translated_out(PG_FUNCTION_ARGS)
         PG_RETURN_CSTRING(write_text(translated));
 
     result = get_language_text(translated, settings[0]);
-    if (result == NULL)
-        PG_RETURN_CSTRING("");
     PG_RETURN_CSTRING(result);
 }
